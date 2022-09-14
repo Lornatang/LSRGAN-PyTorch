@@ -23,7 +23,7 @@ from torchvision.models.feature_extraction import create_feature_extractor
 
 __all__ = [
     "Discriminator", "LSRGAN", "ContentLoss",
-    "discriminator", "lsrgan_x2", "lsrgan_x3", "lsrgan_x4", "content_loss", "content_loss_for_vgg19_34",
+    "discriminator", "lsrgan_x2", "lsrgan_x4", "content_loss", "content_loss_for_vgg19_34",
 
 ]
 
@@ -172,6 +172,7 @@ class LSRGAN(nn.Module):
             upsampling.append(nn.Upsample(scale_factor=2))
             upsampling.append(nn.Conv2d(channels, channels, (3, 3), (1, 1), (1, 1)))
             upsampling.append(nn.LeakyReLU(0.2, True))
+        self.upsampling = nn.Sequential(*upsampling)
 
         # Reconnect a layer of convolution block after upsampling.
         self.conv3 = nn.Sequential(
@@ -272,20 +273,18 @@ def lsrgan_x2(**kwargs: Any) -> LSRGAN:
     return model
 
 
-def lsrgan_x3(**kwargs: Any) -> LSRGAN:
-    model = LSRGAN(upscale_factor=3, **kwargs)
-
-    return model
-
-
 def lsrgan_x4(**kwargs: Any) -> LSRGAN:
     model = LSRGAN(upscale_factor=4, **kwargs)
 
     return model
 
 
-def content_loss(**kwargs: Any) -> ContentLoss:
-    content_loss = ContentLoss(**kwargs)
+def content_loss(feature_model_extractor_node,
+                 feature_model_normalize_mean,
+                 feature_model_normalize_std) -> ContentLoss:
+    content_loss = ContentLoss(feature_model_extractor_node,
+                               feature_model_normalize_mean,
+                               feature_model_normalize_std)
 
     return content_loss
 

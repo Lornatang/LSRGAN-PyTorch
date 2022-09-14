@@ -45,42 +45,31 @@ def main():
     train_prefetcher, test_prefetcher = load_dataset()
     print("Load all datasets successfully.")
 
-    msrn_model, ema_msrn_model = build_model()
-    print(f"Build `{config.model_arch_name}` model successfully.")
+    lsrresnet_model, ema_lsrresnet_model = build_model()
+    print(f"Build `{lsrresnet_config.g_arch_name}` model successfully.")
 
     criterion = define_loss()
     print("Define all loss functions successfully.")
 
-    optimizer = define_optimizer(msrn_model)
+    optimizer = define_optimizer(lsrresnet_model)
     print("Define all optimizer functions successfully.")
 
     scheduler = define_scheduler(optimizer)
     print("Define all optimizer scheduler functions successfully.")
 
     print("Check whether to load pretrained model weights...")
-    if config.pretrained_model_weights_path:
-        msrn_model, ema_msrn_model, start_epoch, best_psnr, best_ssim, optimizer, scheduler = load_state_dict(
-            msrn_model,
-            config.pretrained_model_weights_path,
-            ema_msrn_model,
-            start_epoch,
-            best_psnr,
-            best_ssim,
-            optimizer,
-            scheduler)
-        print(f"Loaded `{config.pretrained_model_weights_path}` pretrained model weights successfully.")
+    if lsrresnet_config.pretrained_model_weights_path:
+        lsrresnet_model = load_state_dict(lsrresnet_model, lsrresnet_config.pretrained_model_weights_path)
+        print(f"Loaded `{lsrresnet_config.pretrained_model_weights_path}` pretrained model weights successfully.")
     else:
         print("Pretrained model weights not found.")
 
     print("Check whether the pretrained model is restored...")
-    if config.resume:
-        msrn_model, ema_msrn_model, start_epoch, est_psnr, best_ssim, optimizer, scheduler = load_state_dict(
-            msrn_model,
-            config.pretrained_model_weights_path,
-            ema_msrn_model,
-            start_epoch,
-            best_psnr,
-            best_ssim,
+    if lsrresnet_config.resume:
+        lsrresnet_model, ema_lsrresnet_model, start_epoch, est_psnr, best_ssim, optimizer, scheduler = load_state_dict(
+            lsrresnet_model,
+            lsrresnet_config.pretrained_model_weights_path,
+            ema_lsrresnet_model,
             optimizer,
             scheduler,
             "resume")
@@ -89,35 +78,35 @@ def main():
         print("Resume training model not found. Start training from scratch.")
 
     # Create a experiment results
-    samples_dir = os.path.join("samples", config.exp_name)
-    results_dir = os.path.join("results", config.exp_name)
+    samples_dir = os.path.join("samples", lsrresnet_config.exp_name)
+    results_dir = os.path.join("results", lsrresnet_config.exp_name)
     make_directory(samples_dir)
     make_directory(results_dir)
 
     # Create training process log file
-    writer = SummaryWriter(os.path.join("samples", "logs", config.exp_name))
+    writer = SummaryWriter(os.path.join("samples", "logs", lsrresnet_config.exp_name))
 
     # Initialize the gradient scaler
     scaler = amp.GradScaler()
 
     # Create an IQA evaluation model
-    psnr_model = PSNR(config.upscale_factor, config.only_test_y_channel)
-    ssim_model = SSIM(config.upscale_factor, config.only_test_y_channel)
+    psnr_model = PSNR(lsrresnet_config.upscale_factor, lsrresnet_config.only_test_y_channel)
+    ssim_model = SSIM(lsrresnet_config.upscale_factor, lsrresnet_config.only_test_y_channel)
 
     # Transfer the IQA model to the specified device
-    psnr_model = psnr_model.to(device=config.device)
-    ssim_model = ssim_model.to(device=config.device)
+    psnr_model = psnr_model.to(device=lsrresnet_config.device)
+    ssim_model = ssim_model.to(device=lsrresnet_config.device)
 
-    for epoch in range(start_epoch, config.epochs):
-        train(msrn_model,
-              ema_msrn_model,
+    for epoch in range(start_epoch, lsrresnet_config.epochs):
+        train(lsrresnet_model,
+              ema_lsrresnet_model,
               train_prefetcher,
               criterion,
               optimizer,
               epoch,
               scaler,
               writer)
-        psnr, ssim = validate(msrn_model,
+        psnr, ssim = validate(lsrresnet_model,
                               test_prefetcher,
                               epoch,
                               writer,
@@ -131,14 +120,14 @@ def main():
 
         # Automatically save the model with the highest index
         is_best = psnr > best_psnr and ssim > best_ssim
-        is_last = (epoch + 1) == config.epochs
+        is_last = (epoch + 1) == lsrresnet_config.epochs
         best_psnr = max(psnr, best_psnr)
         best_ssim = max(ssim, best_ssim)
         save_checkpoint({"epoch": epoch + 1,
                          "best_psnr": best_psnr,
                          "best_ssim": best_ssim,
-                         "state_dict": msrn_model.state_dict(),
-                         "ema_state_dict": ema_msrn_model.state_dict(),
+                         "state_dict": lsrresnet_model.state_dict(),
+                         "ema_state_dict": ema_lsrresnet_model.state_dict(),
                          "optimizer": optimizer.state_dict(),
                          "scheduler": scheduler.state_dict()},
                         f"epoch_{epoch + 1}.pth.tar",
@@ -150,17 +139,17 @@ def main():
 
 def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher]:
     # Load train, test and valid datasets
-    train_datasets = TrainValidImageDataset(config.train_gt_images_dir,
-                                            config.gt_image_size,
-                                            config.upscale_factor,
+    train_datasets = TrainValidImageDataset(lsrresnet_config.train_gt_images_dir,
+                                            lsrresnet_config.gt_image_size,
+                                            lsrresnet_config.upscale_factor,
                                             "Train")
-    test_datasets = TestImageDataset(config.test_gt_images_dir, config.test_lr_images_dir)
+    test_datasets = TestImageDataset(lsrresnet_config.test_gt_images_dir, lsrresnet_config.test_lr_images_dir)
 
     # Generator all dataloader
     train_dataloader = DataLoader(train_datasets,
-                                  batch_size=config.batch_size,
+                                  batch_size=lsrresnet_config.batch_size,
                                   shuffle=True,
-                                  num_workers=config.num_workers,
+                                  num_workers=lsrresnet_config.num_workers,
                                   pin_memory=True,
                                   drop_last=True,
                                   persistent_workers=True)
@@ -173,46 +162,54 @@ def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher]:
                                  persistent_workers=True)
 
     # Place all data on the preprocessing data loader
-    train_prefetcher = CUDAPrefetcher(train_dataloader, config.device)
-    test_prefetcher = CUDAPrefetcher(test_dataloader, config.device)
+    train_prefetcher = CUDAPrefetcher(train_dataloader, lsrresnet_config.device)
+    test_prefetcher = CUDAPrefetcher(test_dataloader, lsrresnet_config.device)
 
     return train_prefetcher, test_prefetcher
 
 
 def build_model() -> [nn.Module, nn.Module]:
-    msrn_model = model.__dict__[config.model_arch_name](in_channels=config.in_channels,
-                                                        out_channels=config.out_channels)
-    msrn_model = msrn_model.to(device=config.device)
+    lsrresnet_model = model.__dict__[lsrresnet_config.g_arch_name](in_channels=lsrresnet_config.in_channels,
+                                                                   out_channels=lsrresnet_config.out_channels,
+                                                                   channels=lsrresnet_config.channels,
+                                                                   growth_channels=lsrresnet_config.growth_channels,
+                                                                   num_blocks=lsrresnet_config.num_blocks)
+    lsrresnet_model = lsrresnet_model.to(device=lsrresnet_config.device)
 
     # Create an Exponential Moving Average Model
-    ema_avg = lambda averaged_model_parameter, model_parameter, num_averaged: (1 - config.model_ema_decay) * averaged_model_parameter + config.model_ema_decay * model_parameter
-    ema_msrn_model = AveragedModel(msrn_model, avg_fn=ema_avg)
+    ema_avg = lambda averaged_model_parameter, model_parameter, num_averaged: (1 - lsrresnet_config.model_ema_decay) * averaged_model_parameter + lsrresnet_config.model_ema_decay * model_parameter
+    ema_lsrresnet_model = AveragedModel(lsrresnet_model, avg_fn=ema_avg)
 
-    return msrn_model, ema_msrn_model
+    return lsrresnet_model, ema_lsrresnet_model
 
 
 def define_loss() -> nn.L1Loss:
     criterion = nn.L1Loss()
-    criterion = criterion.to(device=config.device)
+    criterion = criterion.to(device=lsrresnet_config.device)
 
     return criterion
 
 
-def define_optimizer(msrn_model) -> optim.Adam:
-    optimizer = optim.Adam(msrn_model.parameters(), config.model_lr, config.model_betas, config.model_eps)
+def define_optimizer(lsrresnet_model) -> optim.Adam:
+    optimizer = optim.Adam(lsrresnet_model.parameters(),
+                           lsrresnet_config.model_lr,
+                           lsrresnet_config.model_betas,
+                           lsrresnet_config.model_eps)
 
     return optimizer
 
 
 def define_scheduler(optimizer: optim.Adam) -> lr_scheduler.StepLR:
-    scheduler = lr_scheduler.StepLR(optimizer, config.lr_scheduler_step_size, config.lr_scheduler_gamma)
+    scheduler = lr_scheduler.StepLR(optimizer,
+                                    lsrresnet_config.lr_scheduler_step_size,
+                                    lsrresnet_config.lr_scheduler_gamma)
 
     return scheduler
 
 
 def train(
-        msrn_model: nn.Module,
-        ema_msrn_model: nn.Module,
+        lsrresnet_model: nn.Module,
+        ema_lsrresnet_model: nn.Module,
         train_prefetcher: CUDAPrefetcher,
         criterion: nn.L1Loss,
         optimizer: optim.Adam,
@@ -229,7 +226,7 @@ def train(
     progress = ProgressMeter(batches, [batch_time, data_time, losses], prefix=f"Epoch: [{epoch + 1}]")
 
     # Put the generative network model in training mode
-    msrn_model.train()
+    lsrresnet_model.train()
 
     # Initialize the number of data batches to print logs on the terminal
     batch_index = 0
@@ -246,16 +243,16 @@ def train(
         data_time.update(time.time() - end)
 
         # Transfer in-memory data to CUDA devices to speed up training
-        gt = batch_data["gt"].to(device=config.device, non_blocking=True)
-        lr = batch_data["lr"].to(device=config.device, non_blocking=True)
+        gt = batch_data["gt"].to(device=lsrresnet_config.device, non_blocking=True)
+        lr = batch_data["lr"].to(device=lsrresnet_config.device, non_blocking=True)
 
         # Initialize generator gradients
-        msrn_model.zero_grad(set_to_none=True)
+        lsrresnet_model.zero_grad(set_to_none=True)
 
         # Mixed precision training
         with amp.autocast():
-            sr = msrn_model(lr)
-            loss = torch.mul(config.loss_weights, criterion(sr, gt))
+            sr = lsrresnet_model(lr)
+            loss = torch.mul(lsrresnet_config.loss_weights, criterion(sr, gt))
 
         # Backpropagation
         scaler.scale(loss).backward()
@@ -264,7 +261,7 @@ def train(
         scaler.update()
 
         # Update EMA
-        ema_msrn_model.update_parameters(msrn_model)
+        ema_lsrresnet_model.update_parameters(lsrresnet_model)
 
         # Statistical loss value for terminal data output
         losses.update(loss.item(), lr.size(0))
@@ -274,7 +271,7 @@ def train(
         end = time.time()
 
         # Write the data during training to the training log file
-        if batch_index % config.train_print_frequency == 0:
+        if batch_index % lsrresnet_config.train_print_frequency == 0:
             # Record loss during training and output to file
             writer.add_scalar("Train/Loss", loss.item(), batch_index + epoch * batches + 1)
             progress.display(batch_index)
@@ -287,7 +284,7 @@ def train(
 
 
 def validate(
-        msrn_model: nn.Module,
+        lsrresnet_model: nn.Module,
         data_prefetcher: CUDAPrefetcher,
         epoch: int,
         writer: SummaryWriter,
@@ -302,7 +299,7 @@ def validate(
     progress = ProgressMeter(len(data_prefetcher), [batch_time, psnres, ssimes], prefix=f"{mode}: ")
 
     # Put the adversarial network model in validation mode
-    msrn_model.eval()
+    lsrresnet_model.eval()
 
     # Initialize the number of data batches to print logs on the terminal
     batch_index = 0
@@ -317,12 +314,12 @@ def validate(
     with torch.no_grad():
         while batch_data is not None:
             # Transfer the in-memory data to the CUDA device to speed up the test
-            gt = batch_data["gt"].to(device=config.device, non_blocking=True)
-            lr = batch_data["lr"].to(device=config.device, non_blocking=True)
+            gt = batch_data["gt"].to(device=lsrresnet_config.device, non_blocking=True)
+            lr = batch_data["lr"].to(device=lsrresnet_config.device, non_blocking=True)
 
             # Use the generator model to generate a fake sample
             with amp.autocast():
-                sr = msrn_model(lr)
+                sr = lsrresnet_model(lr)
 
             # Statistical loss value for terminal data output
             psnr = psnr_model(sr, gt)
@@ -335,7 +332,7 @@ def validate(
             end = time.time()
 
             # Record training log information
-            if batch_index % config.valid_print_frequency == 0 or batch_index < config.valid_print_frequency:
+            if batch_index % lsrresnet_config.valid_print_frequency == 0:
                 progress.display(batch_index + 1)
 
             # Preload the next batch of data

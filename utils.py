@@ -14,7 +14,7 @@
 import os
 import shutil
 from enum import Enum
-from typing import Any
+from typing import Any, Tuple
 
 import torch
 from torch import nn
@@ -31,13 +31,10 @@ def load_state_dict(
         model: nn.Module,
         model_weights_path: str,
         ema_model: nn.Module = None,
-        start_epoch: int = None,
-        best_psnr: float = None,
-        best_ssim: float = None,
         optimizer: torch.optim.Optimizer = None,
         scheduler: torch.optim.lr_scheduler = None,
         load_mode: str = None,
-) -> tuple[Module, Module | None, int | None | Any, Any, Any, Optimizer | None, Any]:
+) -> tuple[Module, Module, Any, Any, Any, Optimizer | None, Any] | tuple[Module, Any, Any, Any, Optimizer | None, Any] | Module:
     # Load model weights
     checkpoint = torch.load(model_weights_path, map_location=lambda storage, loc: storage)
 
@@ -52,16 +49,21 @@ def load_state_dict(
         # Overwrite the model weights to the current model (base model)
         model_state_dict.update(state_dict)
         model.load_state_dict(model_state_dict)
-        # Load ema model state dict. Extract the fitted model weights
-        ema_model_state_dict = ema_model.state_dict()
-        ema_state_dict = {k: v for k, v in checkpoint["ema_state_dict"].items() if k in ema_model_state_dict.keys()}
-        # Overwrite the model weights to the current model (ema model)
-        ema_model_state_dict.update(ema_state_dict)
-        ema_model.load_state_dict(ema_model_state_dict)
         # Load the optimizer model
         optimizer.load_state_dict(checkpoint["optimizer"])
         # Load the scheduler model
         scheduler.load_state_dict(checkpoint["scheduler"])
+
+        if ema_model is not None:
+            # Load ema model state dict. Extract the fitted model weights
+            ema_model_state_dict = ema_model.state_dict()
+            ema_state_dict = {k: v for k, v in checkpoint["ema_state_dict"].items() if k in ema_model_state_dict.keys()}
+            # Overwrite the model weights to the current model (ema model)
+            ema_model_state_dict.update(ema_state_dict)
+            ema_model.load_state_dict(ema_model_state_dict)
+            return model, ema_model, start_epoch, best_psnr, best_ssim, optimizer, scheduler
+
+        return model, start_epoch, best_psnr, best_ssim, optimizer, scheduler
     else:
         # Load model state dict. Extract the fitted model weights
         model_state_dict = model.state_dict()
@@ -71,7 +73,7 @@ def load_state_dict(
         model_state_dict.update(state_dict)
         model.load_state_dict(model_state_dict)
 
-    return model, ema_model, start_epoch, best_psnr, best_ssim, optimizer, scheduler
+        return model
 
 
 def make_directory(dir_path: str) -> None:
