@@ -21,7 +21,7 @@ import torch
 from torchvision.transforms import functional as F
 
 __all__ = [
-    "image_to_tensor", "tensor_to_image",
+    "image_to_tensor", "tensor_to_image", "preprocess_one_image",
     "image_resize",
     "expand_y", "rgb_to_ycbcr", "bgr_to_ycbcr", "ycbcr_to_bgr", "ycbcr_to_rgb",
     "rgb_to_ycbcr_torch", "bgr_to_ycbcr_torch",
@@ -84,6 +84,20 @@ def tensor_to_image(tensor: torch.Tensor, range_norm: bool, half: bool) -> Any:
 
     return image
 
+
+def preprocess_one_image(image_path: str, device: torch.device) -> torch.Tensor:
+    image = cv2.imread(image_path).astype(np.float32) / 255.0
+
+    # BGR to RGB
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    # Convert image data to pytorch format data
+    tensor = image_to_tensor(image, False, False).unsqueeze_(0)
+
+    # Transfer tensor channel image format data to CUDA device
+    tensor = tensor.to(device=device, memory_format=torch.channels_last, non_blocking=True)
+
+    return tensor
 
 def _cubic(x: Any) -> Any:
     """Implementation of `cubic` function in Matlab under Python language.

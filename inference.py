@@ -15,7 +15,6 @@ import argparse
 import os
 
 import cv2
-import numpy as np
 import torch
 from torch import nn
 
@@ -49,21 +48,6 @@ def build_model(model_arch_name: str, device: torch.device) -> [nn.Module, nn.Mo
     return g_model
 
 
-def preprocess_image(image_path: str, device: torch.device) -> torch.Tensor:
-    image = cv2.imread(image_path).astype(np.float32) / 255.0
-
-    # BGR to RGB
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-    # Convert image data to pytorch format data
-    tensor = imgproc.image_to_tensor(image, False, False).unsqueeze_(0)
-
-    # Transfer tensor channel image format data to CUDA device
-    tensor = tensor.to(device=device, memory_format=torch.channels_last, non_blocking=True)
-
-    return tensor
-
-
 def main(args):
     device = choice_device(args.device_type)
 
@@ -72,13 +56,13 @@ def main(args):
     print(f"Build `{args.model_arch_name}` model successfully.")
 
     # Load model weights
-    g_model = load_state_dict(g_model, args.g_model_weights_path)
-    print(f"Load `{args.g_arch_name}` model weights `{os.path.abspath(args.g_model_weights_path)}` successfully.")
+    g_model = load_state_dict(g_model, args.model_weights_path)
+    print(f"Load `{args.model_arch_name}` model weights `{os.path.abspath(args.model_weights_path)}` successfully.")
 
     # Start the verification mode of the model.
     g_model.eval()
 
-    lr_tensor = preprocess_image(args.image_path, args.image_size, device)
+    lr_tensor = imgproc.preprocess_one_image(args.inputs_path, device)
 
     # Use the model to generate super-resolved images
     with torch.no_grad():
@@ -98,8 +82,9 @@ if __name__ == "__main__":
     parser.add_argument("--inputs_path", type=str, default="./figure/comic_lr.png", help="Low-resolution image path.")
     parser.add_argument("--output_path", type=str, default="./figure/comic_sr.png", help="Super-resolution image path.")
     parser.add_argument("--model_weights_path", type=str,
-                        default="./results/pretrained_models/LSRGAN_x4-DIV2K-572bb58f.pth.tar",
+                        default="./results/pretrained_models/LSRResNet_x4-DIV2K-55d16947.pth.tar",
                         help="Model weights file path.")
+    parser.add_argument("--device_type", type=str, default="cpu", choices=["cpu", "cuda"])
     args = parser.parse_args()
 
     main(args)

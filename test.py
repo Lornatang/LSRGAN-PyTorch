@@ -17,10 +17,10 @@ import cv2
 import torch
 from natsort import natsorted
 
-import config
 import imgproc
-from image_quality_assessment import PSNR, SSIM
+import lsrresnet_config
 import model
+from image_quality_assessment import PSNR, SSIM
 from utils import make_directory
 
 model_names = sorted(
@@ -30,60 +30,51 @@ model_names = sorted(
 
 def main() -> None:
     # Initialize the super-resolution msrn_model
-    msrn_model = model.__dict__[config.model_arch_name](in_channels=config.in_channels,
-                                                        out_channels=config.out_channels)
-    msrn_model = msrn_model.to(device=config.device)
-    print(f"Build `{config.model_arch_name}` model successfully.")
+    msrn_model = model.__dict__[lsrresnet_config.g_arch_name](in_channels=lsrresnet_config.in_channels,
+                                                              out_channels=lsrresnet_config.out_channels,
+                                                              channels=lsrresnet_config.channels,
+                                                              growth_channels=lsrresnet_config.growth_channels,
+                                                              num_blocks=lsrresnet_config.num_blocks)
+    msrn_model = msrn_model.to(device=lsrresnet_config.device)
+    print(f"Build `{lsrresnet_config.g_arch_name}` model successfully.")
 
     # Load the super-resolution msrn_model weights
-    checkpoint = torch.load(config.model_weights_path, map_location=lambda storage, loc: storage)
+    checkpoint = torch.load(lsrresnet_config.model_weights_path, map_location=lambda storage, loc: storage)
     msrn_model.load_state_dict(checkpoint["state_dict"])
-    print(f"Load `{config.model_arch_name}` model weights `{os.path.abspath(config.model_weights_path)}` successfully.")
+    print(f"Load `{lsrresnet_config.g_arch_name}` model weights "
+          f"`{os.path.abspath(lsrresnet_config.model_weights_path)}` successfully.")
 
     # Create a folder of super-resolution experiment results
-    make_directory(config.sr_dir)
+    make_directory(lsrresnet_config.sr_dir)
 
     # Start the verification mode of the msrn_model.
     msrn_model.eval()
 
     # Initialize the sharpness evaluation function
-    psnr = PSNR(config.upscale_factor, config.only_test_y_channel)
-    ssim = SSIM(config.upscale_factor, config.only_test_y_channel)
+    psnr = PSNR(lsrresnet_config.upscale_factor, lsrresnet_config.only_test_y_channel)
+    ssim = SSIM(lsrresnet_config.upscale_factor, lsrresnet_config.only_test_y_channel)
 
     # Set the sharpness evaluation function calculation device to the specified msrn_model
-    psnr = psnr.to(device=config.device, non_blocking=True)
-    ssim = ssim.to(device=config.device, non_blocking=True)
+    psnr = psnr.to(device=lsrresnet_config.device, non_blocking=True)
+    ssim = ssim.to(device=lsrresnet_config.device, non_blocking=True)
 
     # Initialize IQA metrics
     psnr_metrics = 0.0
     ssim_metrics = 0.0
 
     # Get a list of test image file names.
-    file_names = natsorted(os.listdir(config.test_gt_images_dir))
+    file_names = natsorted(os.listdir(lsrresnet_config.test_gt_images_dir))
     # Get the number of test image files.
     total_files = len(file_names)
 
     for index in range(total_files):
-        gt_image_path = os.path.join(config.test_gt_images_dir, file_names[index])
-        sr_image_path = os.path.join(config.sr_dir, file_names[index])
-        lr_image_path = os.path.join(config.test_lr_images_dir, file_names[index])
+        gt_image_path = os.path.join(lsrresnet_config.test_gt_images_dir, file_names[index])
+        sr_image_path = os.path.join(lsrresnet_config.sr_dir, file_names[index])
+        lr_image_path = os.path.join(lsrresnet_config.test_lr_images_dir, file_names[index])
 
         print(f"Processing `{os.path.abspath(gt_image_path)}`...")
-        # Read LR image and HR image
-        gt_image = cv2.imread(gt_image_path).astype(np.float32) / 255.0
-        lr_image = cv2.imread(lr_image_path).astype(np.float32) / 255.0
-
-        # Convert BGR channel image format data to RGB channel image format data
-        gt_image = cv2.cvtColor(gt_image, cv2.COLOR_BGR2RGB)
-        lr_image = cv2.cvtColor(lr_image, cv2.COLOR_BGR2RGB)
-
-        # Convert RGB channel image format data to Tensor channel image format data
-        gt_tensor = imgproc.image_to_tensor(gt_image, False, False).unsqueeze_(0)
-        lr_tensor = imgproc.image_to_tensor(lr_image, False, False).unsqueeze_(0)
-
-        # Transfer Tensor channel image format data to CUDA device
-        gt_tensor = gt_tensor.to(device=config.device, non_blocking=True)
-        lr_tensor = lr_tensor.to(device=config.device, non_blocking=True)
+        gt_tensor = imgproc.preprocess_one_image(gt_image_path, lsrresnet_config.device)
+        lr_tensor = imgproc.preprocess_one_image(lr_image_path, lsrresnet_config.device)
 
         # Only reconstruct the Y channel image data.
         with torch.no_grad():
