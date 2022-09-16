@@ -48,13 +48,13 @@ def main():
     d_model, g_model, ema_g_model = build_model()
     print(f"Build `{lsrgan_config.g_arch_name}` model successfully.")
 
-    criterion = define_loss()
+    pixel_criterion, content_criterion, adversarial_criterion = define_loss()
     print("Define all loss functions successfully.")
 
-    optimizer = define_optimizer(g_model)
+    d_optimizer, g_optimizer = define_optimizer(d_model, g_model)
     print("Define all optimizer functions successfully.")
 
-    scheduler = define_scheduler(optimizer)
+    d_scheduler, g_scheduler = define_scheduler(d_optimizer, g_optimizer)
     print("Define all optimizer scheduler functions successfully.")
 
     print("Check whether to load pretrained d model weights...")
@@ -76,8 +76,8 @@ def main():
         lsrresnet_model, ema_lsrresnet_model, start_epoch, est_psnr, best_ssim, optimizer, scheduler = load_state_dict(
             d_model,
             lsrgan_config.pretrained_d_model_weights_path,
-            optimizer=optimizer,
-            scheduler=scheduler,
+            optimizer=d_optimizer,
+            scheduler=d_scheduler,
             load_mode="resume")
         print("Loaded pretrained model weights.")
     else:
@@ -89,8 +89,8 @@ def main():
             g_model,
             lsrgan_config.pretrained_g_model_weights_path,
             ema_model=ema_g_model,
-            optimizer=optimizer,
-            scheduler=scheduler,
+            optimizer=g_optimizer,
+            scheduler=g_scheduler,
             load_mode="resume")
         print("Loaded pretrained model weights.")
     else:
@@ -117,11 +117,15 @@ def main():
     ssim_model = ssim_model.to(device=lsrgan_config.device)
 
     for epoch in range(start_epoch, lsrgan_config.epochs):
-        train(g_model,
+        train(d_model,
+              g_model,
               ema_g_model,
               train_prefetcher,
-              criterion,
-              optimizer,
+              pixel_criterion,
+              content_criterion,
+              adversarial_criterion,
+              d_optimizer,
+              g_optimizer,
               epoch,
               scaler,
               writer)
@@ -135,7 +139,8 @@ def main():
         print("\n")
 
         # Update LR
-        scheduler.step()
+        d_scheduler.step()
+        g_scheduler.step()
 
         # Automatically save the model with the highest index
         is_best = psnr > best_psnr and ssim > best_ssim
@@ -146,8 +151,8 @@ def main():
                          "best_psnr": best_psnr,
                          "best_ssim": best_ssim,
                          "state_dict": d_model.state_dict(),
-                         "optimizer": optimizer.state_dict(),
-                         "scheduler": scheduler.state_dict()},
+                         "optimizer": d_optimizer.state_dict(),
+                         "scheduler": d_scheduler.state_dict()},
                         f"d_epoch_{epoch + 1}.pth.tar",
                         samples_dir,
                         results_dir,
@@ -158,8 +163,8 @@ def main():
                          "best_ssim": best_ssim,
                          "state_dict": g_model.state_dict(),
                          "ema_state_dict": ema_g_model.state_dict(),
-                         "optimizer": optimizer.state_dict(),
-                         "scheduler": scheduler.state_dict()},
+                         "optimizer": g_optimizer.state_dict(),
+                         "scheduler": g_scheduler.state_dict()},
                         f"g_epoch_{epoch + 1}.pth.tar",
                         samples_dir,
                         results_dir,
@@ -230,21 +235,29 @@ def define_loss() -> [nn.L1Loss, model.content_loss, nn.BCEWithLogitsLoss]:
     return pixel_criterion, content_criterion, adversarial_criterion
 
 
-def define_optimizer(g_model) -> optim.Adam:
-    optimizer = optim.Adam(g_model.parameters(),
-                           lsrgan_config.model_lr,
-                           lsrgan_config.model_betas,
-                           lsrgan_config.model_eps)
+def define_optimizer(d_model, g_model) -> [optim.Adam, optim.Adam]:
+    d_optimizer = optim.Adam(d_model.parameters(),
+                             lsrgan_config.model_lr,
+                             lsrgan_config.model_betas,
+                             lsrgan_config.model_eps)
+    g_optimizer = optim.Adam(g_model.parameters(),
+                             lsrgan_config.model_lr,
+                             lsrgan_config.model_betas,
+                             lsrgan_config.model_eps)
+    return d_optimizer, g_optimizer
 
-    return optimizer
 
-
-def define_scheduler(optimizer: optim.Adam) -> lr_scheduler.MultiStepLR:
-    scheduler = lr_scheduler.MultiStepLR(optimizer,
-                                         lsrgan_config.lr_scheduler_milestones,
-                                         lsrgan_config.lr_scheduler_gamma)
-
-    return scheduler
+def define_scheduler(
+        d_optimizer: optim.Adam,
+        g_optimizer: optim.Adam
+) -> [lr_scheduler.MultiStepLR, lr_scheduler.MultiStepLR]:
+    d_scheduler = lr_scheduler.MultiStepLR(d_optimizer,
+                                           lsrgan_config.lr_scheduler_milestones,
+                                           lsrgan_config.lr_scheduler_gamma)
+    g_scheduler = lr_scheduler.MultiStepLR(g_optimizer,
+                                           lsrgan_config.lr_scheduler_milestones,
+                                           lsrgan_config.lr_scheduler_gamma)
+    return d_scheduler, g_scheduler
 
 
 def train(
@@ -300,8 +313,8 @@ def train(
         lr = batch_data["lr"].to(device=lsrgan_config.device, non_blocking=True)
 
         # Set the real sample label to 1, and the false sample label to 0
-        real_label = torch.full([lr.size(0), 1], 1.0, dtype=lr.dtype, device=lsrgan_config.device)
-        fake_label = torch.full([lr.size(0), 1], 0.0, dtype=lr.dtype, device=lsrgan_config.device)
+        real_label = torch.full([gt.size(0), 1], 1.0, dtype=gt.dtype, device=lsrgan_config.device)
+        fake_label = torch.full([gt.size(0), 1], 0.0, dtype=gt.dtype, device=lsrgan_config.device)
 
         # Start training the discriminator model
         # During discriminator model training, enable discriminator model backpropagation
@@ -313,6 +326,8 @@ def train(
 
         # Calculate the classification score of the discriminator model for real samples
         with amp.autocast():
+            # Use the generator model to generate fake samples
+            sr = g_model(lr)
             hr_output = d_model(gt)
             sr_output = d_model(sr.detach().clone())
             d_loss_hr = adversarial_criterion(hr_output - torch.mean(sr_output), real_label) * 0.5
@@ -346,8 +361,6 @@ def train(
 
         # Calculate the perceptual loss of the generator, mainly including pixel loss, feature loss and adversarial loss
         with amp.autocast():
-            # Use the generator model to generate fake samples
-            sr = g_model(lr)
             # Output discriminator to discriminate object probability
             hr_output = d_model(gt.detach().clone())
             sr_output = d_model(sr)
@@ -397,7 +410,7 @@ def train(
             writer.add_scalar("Train/Adversarial_Loss", adversarial_loss.item(), iters)
             writer.add_scalar("Train/D(HR)_Probability", d_hr_probability.item(), iters)
             writer.add_scalar("Train/D(SR)_Probability", d_sr_probability.item(), iters)
-            progress.display(batch_index+ 1)
+            progress.display(batch_index + 1)
 
         # Preload the next batch of data
         batch_data = train_prefetcher.next()

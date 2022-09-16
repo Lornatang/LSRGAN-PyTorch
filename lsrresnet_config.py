@@ -48,12 +48,12 @@ if mode == "train":
     test_gt_images_dir = f"./data/Set5/GTmod12"
     test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
 
-    gt_image_size = 128 // upscale_factor
+    gt_image_size = 128
     batch_size = 16
     num_workers = 4
 
     # Load the address of the pretrained model
-    pretrained_model_weights_path = ""
+    pretrained_model_weights_path = "./results/pretrained_models/LSRResNet_x4-DIV2K-55d16947.pth.tar"
 
     # Incremental training and migration training
     resume = ""
@@ -86,4 +86,4 @@ if mode == "test":
     test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
     sr_dir = f"./results/{exp_name}"
 
-    model_weights_path = ""
+    model_weights_path = "./results/pretrained_models/LSRResNet_x4-DIV2K-55d16947.pth.tar"
